@@ -3,88 +3,111 @@
 import re, os
 import argparse
 
-def parse_command( name, args ):
-	print 'parse', name, args
+class LaTeX_Parser:
+	tokens = []
 
-	html = ''
+	def tokenize( self, args ):
+		with open( args.target ) as f:
+			chars = list( f.read() )
 
-	if name == 'documentclass':
-		html += '<head>\n'
-		html += '\t<meta charset="UTF-8" />\n'
-		html += '\t<link rel="stylesheet" href="packages/' + name + '/' + args[ len( args ) - 1 ] + '.css" />\n'
-	elif name == 'title':
-		html += '\t<title>' + args[ len( args ) - 1 ] + '</title>\n'
-	else:
-		html += ' '.join( args )
+		prev_state = None
+		curr_state = 'default'
+		text = ''
+		command = command_args = None
 
-	return html
+		for i, curr_char in enumerate( chars ):
+			prev_char = None if ( i - 1 ) < 0 else chars[i-1]
+			next_char = None if ( i + 1 ) >= len( chars ) else chars[i+1]
 
-def open_environment( name, args ):
-	print 'open', name, args
+#			print prev_state, curr_state
+#			print curr_char
+#			print command, command_args
 
-	html = ''
+			if curr_state == 'comment':
+				if curr_char == '\n' and prev_char != '\\':
+					self.tokens.append( { 'state': curr_state, 'text': text } )
+					text = ''
+					curr_state = prev_state
+					prev_state = None
+				else:
+					text += curr_char
+			elif curr_state == 'math':
+				if curr_char == '$' and prev_char != '\\':
+					self.tokens.append( { 'state': curr_state, 'text': text } )
+					text = ''
+					curr_state = prev_state
+					prev_state = None
+				else:
+					text += curr_char
+			elif curr_state in [ 'command-begin', 'command-arg-square', 'command-arg-curly', 'command-end' ]:
+				if curr_state == 'command-begin' and curr_char in [ ' ', '\n' ]:
+					self.tokens.append( { 'state': 'command', 'command': command, 'args': [] } )
+					text = ''
+					command = None
+					command_args = None
+					curr_state = prev_state
+					prev_state = None
+				elif curr_state in [ 'command-begin', 'command-end' ] and curr_char == '[' and prev_char != '\\':
+					curr_state = 'command-arg-square'
+				elif curr_state in [ 'command-begin', 'command-end' ] and curr_char == '{' and prev_char != '\\':
+					curr_state = 'command-arg-curly'
+				elif curr_state in [ 'command-arg-square', 'command-arg-curly' ]:
+					if ( ( curr_state == 'command-arg-square' and curr_char == ']' ) or ( curr_state == 'command-arg-curly' and curr_char == '}' ) ) and prev_char != '\\':
+						type = 'square' if curr_state == 'command-arg-square' else 'curly'
 
-	if name == 'document':
-		html += '</head>\n'
-		html += '<body>\n'
-	else:
-#		html += '<' + name + ' ' + ' '.join( args ) + '>'
-		html += '<div class="' + name + '" ' + ' '.join( args ) + '>\n'
+						command_args.append( { 'type': type, 'text': text } )
 
-	return html
+						text = ''
 
-def close_environment( name, args ):
-	print 'close', name, args
-
-	html = ''
-
-	if name == 'document':
-		html += '</body>\n'
-	else:
-#		html += '</' + name + '>'
-		html += '</div>\n'
-
-	return html
-
-def parse_math( math ):
-	def get_math_mode( m ):
-		if m in [ '+', '-', '*', '/', '=', '<', '>', '(', ')', '[', ']', '{', '}', ',' ]:
-			return 'mo'
-		elif m.isdigit() or m == '.':
-			return 'mn'
-		else:
-			return 'mi'
-
-	print math
-
-	html = ''
-
-	math_mode = 'mi'
-	math_string = ''
-
-	for m in math:
-		if m.isspace():
-			html += m
-		elif m == '_':
-#			html += '<msub>' +
-			pass
-		elif m == '^':
-#			html += '<msub>' +
-			pass
-		else:
-			new_math_mode = get_math_mode( m )
-
-			if math_mode == new_math_mode and new_math_mode != 'mo':
-				math_string += m
+						if next_char not in [ '[', '{' ]:
+							self.tokens.append( { 'state': 'command', 'command': command, 'args': command_args } )
+							command = None
+							command_args = None
+							curr_state = prev_state
+							prev_state = None
+						else:
+							curr_state = 'command-end'
+					else:
+						text += curr_char
+				else:
+					command += curr_char
 			else:
-				html += '<' + math_mode + '>' + math_string + '</' + math_mode + '>'
+				if curr_char == '%' and prev_char != '\\':
+					self.tokens.append( { 'state': curr_state, 'text': text } )
+					text = ''
+					prev_state = curr_state
+					curr_state = 'comment'
+				elif curr_char == '$' and prev_char != '\\':
+					self.tokens.append( { 'state': curr_state, 'text': text } )
+					text = ''
+					prev_state = curr_state
+					curr_state = 'math'
+				elif curr_char == '\\' and prev_char != '\\':
+					self.tokens.append( { 'state': curr_state, 'text': text } )
+					text = ''
+					command = ''
+					command_args = []
+					prev_state = curr_state
+					curr_state = 'command-begin'
+				else:
+					text += curr_char
+		else:
+			# Flush the last chunk of stored information
+			if curr_state == 'command-end':
+				self.tokens.append( { 'state': 'command', 'command': command, 'args': command_args } )
+				command = None
+				command_args = None
+			else:
+				self.tokens.append( { 'state': curr_state, 'text': text } )
 
-				math_mode = new_math_mode
-				math_string = m
+			text = ''
+			curr_state = prev_state
+			prev_state = None
 
-	html += '<' + math_mode + '>' + math_string + '</' + math_mode + '>'
+		return self.tokens
 
-	return html
+	def output_HTML( self, tokens ):
+		pass
 
 parser = argparse.ArgumentParser( prog = 'latex2html.py', description = 'Convert LaTeX documents to HTML.' )
 
@@ -101,131 +124,10 @@ target_file = os.path.basename( args.target )
 if args.destination == None:
 	args.destination = target_path
 
-html = '<!DOCTYPE html>\n<html>\n'
+parser = LaTeX_Parser()
 
-last_char = ''
+tokens = parser.tokenize( args )
 
-current_modes = ['']
-current_environments = ['']
+print tokens
 
-with open( args.target ) as f:
-	while True:
-		c = f.read( 1 )
-
-		print last_char
-		print current_modes
-		print current_environments
-		print c
-
-		mode = current_modes.pop()
-		current_modes.append(mode)
-
-		environment = current_environments.pop()
-		current_environments.append(environment)
-
-		if mode == 'command':
-			if c.isspace() or c in ['#', '$', '%', '^', '&', '_', '}', '~', '\\'] or not c:
-				if command_name == 'begin':
-					# Get environment name
-					new_environment = command_args.pop()
-
-					# Enter environment
-					current_environments.append( new_environment )
-
-					# Open environment
-					html += open_environment( new_environment, command_args )
-				elif command_name == 'end':
-					# Get environment name
-					old_environment = command_args.pop()
-
-					# Make sure the environment we want to close is actually open and available
-					if environment == old_environment:
-						# Close environment
-						html += close_environment( old_environment, command_args )
-
-						# Exit environment
-						current_environments.pop()
-					else:
-						raise Error
-				else:
-					html += parse_command( command_name, command_args )
-
-				# Exit command mode
-				current_modes.pop()
-			elif c == '{':
-				# Enter argument mode
-				current_modes.append('argument')
-
-				argument_name = ''
-			else:
-				command_name += c
-		elif mode == 'argument':
-			if c == '}':
-				command_args.append( argument_name )
-
-				# Exit argument mode
-				current_modes.pop()
-			else:
-				argument_name += c
-		elif mode == 'math':
-			if c == '$':
-				html += parse_math( math )
-
-				# Close math element
-				html += '</math>'
-
-				# Exit math mode
-				current_modes.pop()
-			else:
-				math.append( c )
-		elif mode == 'comment':
-			if c == '\n':
-				# Close comment
-				html += ' -->\n'
-
-				# Exit comment mode
-				current_modes.pop()
-			else:
-				html += c
-		else:
-			if c == '\\':
-				# Enter command mode
-				current_modes.append('command')
-
-				command_name = ''
-				command_args = []
-			elif c == '$':
-				# Enter math mode
-				current_modes.append('math')
-
-				# Cancel last char
-				last_char = ''
-
-				math = []
-
-				# Open comment
-				html += '<math>'
-			elif c == '%':
-				# Enter comment mode
-				current_modes.append('comment')
-
-				# Open comment
-				html += '<!-- '
-			else:
-				html += c
-
-				if c == '\n' and environment == 'document' and last_char == '\n':
-					html += '<p>'
-
-				last_char = c
-
-		# EOF
-		if not c:
-			html += '</html>'
-			break
-
-print html
-
-html_file = open( args.destination + target_file + '.html', 'w' )
-
-html_file.write( html )
+html = parser.output_HTML( tokens )
