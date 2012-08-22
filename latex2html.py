@@ -23,7 +23,17 @@ class LaTeX_Parser:
 #			print curr_char
 #			print command, command_args
 
-			if curr_state == 'comment':
+			if curr_state == 'blank':
+				if curr_char == '\n':
+					if text != '':
+						self.tokens.append( { 'state': prev_state, 'text': text } )
+						text = ''
+				else:
+					text += curr_char
+
+				curr_state = prev_state
+				prev_state = None
+			elif curr_state == 'comment':
 				if curr_char == '\n' and prev_char != '\\':
 					self.tokens.append( { 'state': curr_state, 'text': text } )
 					text = ''
@@ -89,6 +99,9 @@ class LaTeX_Parser:
 					command_args = []
 					prev_state = curr_state
 					curr_state = 'command-begin'
+				elif curr_char == '\n' and prev_char != '\\':
+					prev_state = curr_state
+					curr_state = 'blank'
 				else:
 					text += curr_char
 		else:
@@ -107,7 +120,75 @@ class LaTeX_Parser:
 		return self.tokens
 
 	def output_HTML( self, tokens ):
-		pass
+		html = '<!DOCTYPE html>\n<html>\n'
+
+		title = ''
+		packages = []
+		in_document = False
+
+		for i, token in enumerate( tokens ):
+			if token['state'] == 'comment':
+				comment = '\t<!--'
+
+				if token['text'][0] != ' ':
+					comment += ' '
+
+				comment += token['text']
+
+				if token['text'][len( token['text'] ) - 1] != ' ':
+					comment += ' '
+
+				comment += '-->\n'
+
+				html += comment
+			else:
+				if in_document:
+					if token['state'] == 'command':
+						last_arg = token['args'].pop()
+
+						if token['command'] == 'end' and last_arg['text'] == 'document':
+							in_document = False
+							html += '</body>\n'
+						else:
+							print token['command']
+#							html += '<' + token['command'] + '>'
+#							html += token['args'].join()
+#							html += '</' + token['command'] + '>\n'
+					elif token['state'] == 'math':
+						html += '\t<math>' + token['text'] + '</math>\n'
+					elif token['state'] == 'default':
+						if token['text'] == '' and tokens[i-1]['state'] != 'default':
+							html += '\n'
+						else:
+							html += '\t<p>' + token['text'] + '</p>\n'
+					else:
+						if 'text' in token:
+							html += token['text']
+				else:
+					if token['state'] == 'command':
+						last_arg = token['args'].pop()
+
+						if token['command'] == 'documentclass':
+							pass
+						elif token['command'] == 'title':
+							title = last_arg['text']
+						elif token['command'] == 'usepackage':
+							pass
+						elif token['command'] == 'begin' and last_arg['text'] == 'document':
+							html += '<head>\n\t<meta charset="UTF-8" />\n'
+							html += '\t<title>' + title + '</title>\n'
+
+							for pkg in packages:
+								html += '\t<link rel="stylesheet" href="packages/' + pkg['name'] + '" />'
+
+							html += '</head>\n'
+
+							in_document = True
+							html += '<body>\n'
+
+		html += '</html>\n'
+
+		return html
 
 parser = argparse.ArgumentParser( prog = 'latex2html.py', description = 'Convert LaTeX documents to HTML.' )
 
@@ -131,3 +212,9 @@ tokens = parser.tokenize( args )
 print tokens
 
 html = parser.output_HTML( tokens )
+
+print html
+
+html_file = open( args.destination + target_file + '.html', 'w' )
+
+html_file.write( html )
