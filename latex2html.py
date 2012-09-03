@@ -10,7 +10,7 @@ class LaTeX_Parser:
 		with open( args.target ) as f:
 			chars = list( f.read() )
 
-		prev_state = None
+		prev_state = []
 		curr_state = 'default'
 		text = ''
 		command = command_args = None
@@ -24,89 +24,114 @@ class LaTeX_Parser:
 #			print command, command_args
 
 			if curr_state == 'blank':
+				self.tokens.append( { 'state': prev_state[-1], 'text': text } )
+				text = ''
+
 				if curr_char == '\n':
-					if text != '':
-						self.tokens.append( { 'state': prev_state, 'text': text } )
-						text = ''
+					self.tokens.append( { 'state': curr_state } )
 				else:
 					text += curr_char
 
-				curr_state = prev_state
-				prev_state = None
+				curr_state = prev_state.pop()
 			elif curr_state == 'comment':
 				if curr_char == '\n' and prev_char != '\\':
 					self.tokens.append( { 'state': curr_state, 'text': text } )
 					text = ''
-					curr_state = prev_state
-					prev_state = None
+					curr_state = prev_state.pop()
 				else:
 					text += curr_char
 			elif curr_state == 'math':
 				if curr_char == '$' and prev_char != '\\':
 					self.tokens.append( { 'state': curr_state, 'text': text } )
 					text = ''
-					curr_state = prev_state
-					prev_state = None
+					curr_state = prev_state.pop()
 				else:
 					text += curr_char
-			elif curr_state in [ 'command-begin', 'command-arg-square', 'command-arg-curly', 'command-end' ]:
-				if curr_state == 'command-begin' and curr_char in [ ' ', '\n' ]:
-					self.tokens.append( { 'state': 'command', 'command': command, 'args': [] } )
-					text = ''
+			elif curr_state == 'command-begin':
+				command += curr_char
+
+				if re.match( '[a-z]', curr_char, re.I ):
+					curr_state = 'command-internal'
+				else:
+					self.tokens.append( { 'state': 'command', 'command': command, 'args': command_args } )
 					command = None
 					command_args = None
-					curr_state = prev_state
-					prev_state = None
-				elif curr_state in [ 'command-begin', 'command-end' ] and curr_char == '[' and prev_char != '\\':
+					curr_state = prev_state.pop()
+			elif curr_state == 'command-internal':
+				if curr_char == '\\':
+					self.tokens.append( { 'state': 'command', 'command': command, 'args': command_args } )
+					command = ''
+					command_args = []
+					curr_state = 'command-begin'
+				elif curr_char == '[':
 					curr_state = 'command-arg-square'
-				elif curr_state in [ 'command-begin', 'command-end' ] and curr_char == '{' and prev_char != '\\':
+					square_bracket_count = 1
+					curly_bracket_count = 0
+				elif curr_char == '{':
 					curr_state = 'command-arg-curly'
-				elif curr_state in [ 'command-arg-square', 'command-arg-curly' ]:
-					if ( ( curr_state == 'command-arg-square' and curr_char == ']' ) or ( curr_state == 'command-arg-curly' and curr_char == '}' ) ) and prev_char != '\\':
-						type = 'square' if curr_state == 'command-arg-square' else 'curly'
-
-						command_args.append( { 'type': type, 'text': text } )
-
-						text = ''
-
-						if next_char not in [ '[', '{' ]:
-							self.tokens.append( { 'state': 'command', 'command': command, 'args': command_args } )
-							command = None
-							command_args = None
-							curr_state = prev_state
-							prev_state = None
-						else:
-							curr_state = 'command-end'
-					else:
-						text += curr_char
+					square_bracket_count = 0
+					curly_bracket_count = 1
 				else:
 					command += curr_char
+
+					if not re.match( '[a-z{\\[]', next_char, re.I ):
+						self.tokens.append( { 'state': 'command', 'command': command, 'args': command_args } )
+						command = None
+						command_args = None
+						curr_state = prev_state.pop()
+			elif curr_state in [ 'command-arg-square', 'command-arg-curly' ]:
+				if prev_char != '\\':
+					if curr_char == '[':
+						square_bracket_count += 1
+					elif curr_char == ']':
+						square_bracket_count -= 1
+					elif curr_char == '{':
+						curly_bracket_count += 1
+					elif curr_char == '}':
+						curly_bracket_count -= 1
+
+				if ( curr_state == 'command-arg-square' and square_bracket_count == 0 ) or ( curr_state == 'command-arg-curly' and curly_bracket_count == 0 ):
+					type = 'square' if curr_state == 'command-arg-square' else 'curly'
+
+					command_args.append( { 'type': type, 'text': text } )
+
+					text = ''
+
+					if next_char not in [ '\\', '[', '{' ]:
+						self.tokens.append( { 'state': 'command', 'command': command, 'args': command_args } )
+						command = None
+						command_args = None
+						curr_state = prev_state.pop()
+					else:
+						curr_state = 'command-internal'
+				else:
+					text += curr_char
 			else:
 				if curr_char == '%' and prev_char != '\\':
 					self.tokens.append( { 'state': curr_state, 'text': text } )
 					text = ''
-					prev_state = curr_state
+					prev_state.append( curr_state )
 					curr_state = 'comment'
 				elif curr_char == '$' and prev_char != '\\':
 					self.tokens.append( { 'state': curr_state, 'text': text } )
 					text = ''
-					prev_state = curr_state
+					prev_state.append( curr_state )
 					curr_state = 'math'
 				elif curr_char == '\\' and prev_char != '\\':
 					self.tokens.append( { 'state': curr_state, 'text': text } )
 					text = ''
 					command = ''
 					command_args = []
-					prev_state = curr_state
+					prev_state.append( curr_state )
 					curr_state = 'command-begin'
-				elif curr_char == '\n' and prev_char != '\\':
-					prev_state = curr_state
+				elif curr_char == '\n' and prev_char != '\\' and next_char == '\n':
+					prev_state.append( curr_state )
 					curr_state = 'blank'
 				else:
 					text += curr_char
 		else:
 			# Flush the last chunk of stored information
-			if curr_state == 'command-end':
+			if curr_state == 'command-internal':
 				self.tokens.append( { 'state': 'command', 'command': command, 'args': command_args } )
 				command = None
 				command_args = None
@@ -114,8 +139,6 @@ class LaTeX_Parser:
 				self.tokens.append( { 'state': curr_state, 'text': text } )
 
 			text = ''
-			curr_state = prev_state
-			prev_state = None
 
 		return self.tokens
 
@@ -128,14 +151,14 @@ class LaTeX_Parser:
 
 		for i, token in enumerate( tokens ):
 			if token['state'] == 'comment':
-				comment = '\t<!--'
+				comment = '<!--'
 
 				if token['text'][0] != ' ':
 					comment += ' '
 
 				comment += token['text']
 
-				if token['text'][len( token['text'] ) - 1] != ' ':
+				if token['text'][-1] != ' ':
 					comment += ' '
 
 				comment += '-->\n'
@@ -144,29 +167,40 @@ class LaTeX_Parser:
 			else:
 				if in_document:
 					if token['state'] == 'command':
-						last_arg = token['args'].pop()
+						try:
+							last_arg = token['args'][-1]
+						except:
+#							print token
+							last_arg = None
 
 						if token['command'] == 'end' and last_arg['text'] == 'document':
 							in_document = False
 							html += '</body>\n'
 						else:
-							print token['command']
-#							html += '<' + token['command'] + '>'
-#							html += token['args'].join()
-#							html += '</' + token['command'] + '>\n'
+							html += '<span class="command-' + token['command'] + '">' + token['command'] + '</span>'
+
+							for arg in token['args']:
+								html += '<span class="argument-' + arg['type'] + '">' + arg['text'] + '</span>'
 					elif token['state'] == 'math':
-						html += '\t<math>' + token['text'] + '</math>\n'
+						html += '<math>' + token['text'] + '</math>'
 					elif token['state'] == 'default':
-						if token['text'] == '' and tokens[i-1]['state'] != 'default':
-							html += '\n'
-						else:
-							html += '\t<p>' + token['text'] + '</p>\n'
+						if tokens[i-1]['state'] == 'blank' or ( tokens[i-1]['state'] == 'command' and tokens[i-1]['command'] == 'begin' and tokens[i-1]['args'][-1]['text'] == 'document' ):
+							html += '\t<p>'
+
+						html += token['text']
+
+						if tokens[i+1]['state'] == 'blank' or ( tokens[i+1]['state'] == 'command' and tokens[i+1]['command'] == 'end' and tokens[i+1]['args'][-1]['text'] == 'document' ):
+							html += '</p>\n'
 					else:
 						if 'text' in token:
 							html += token['text']
 				else:
 					if token['state'] == 'command':
-						last_arg = token['args'].pop()
+						try:
+							last_arg = token['args'][-1]
+						except:
+#							print token
+							last_arg = None
 
 						if token['command'] == 'documentclass':
 							pass
@@ -203,7 +237,8 @@ target_path = os.path.dirname( args.target )
 target_file = os.path.basename( args.target )
 
 if args.destination == None:
-	args.destination = target_path
+	target_path = '.' if target_path == '' else target_path
+	args.destination = target_path + '/'
 
 parser = LaTeX_Parser()
 
