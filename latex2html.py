@@ -153,12 +153,15 @@ class LaTeX_Parser:
 			if token['state'] == 'comment':
 				comment = '<!--'
 
-				if token['text'][0] != ' ':
-					comment += ' '
+				if len( token['text'] ) > 0:
+					if token['text'][0] != ' ':
+						comment += ' '
 
-				comment += token['text']
+					comment += token['text']
 
-				if token['text'][-1] != ' ':
+					if token['text'][-1] != ' ':
+						comment += ' '
+				else:
 					comment += ' '
 
 				comment += '-->\n'
